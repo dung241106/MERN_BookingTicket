@@ -1,10 +1,12 @@
 import express from "express";
+import { protectUser } from "../middleware/auth.js";
 import {
   getFavorites,
   getuserBookings,
   UpdateFavorites,
 } from "../controllers/userControllers.js";
 const userRouter = express.Router();
+userRouter.use(protectUser);
 userRouter.get("/bookings", getuserBookings);
 
 userRouter.post("/update-favorite", UpdateFavorites);

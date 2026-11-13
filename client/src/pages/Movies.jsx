@@ -2,7 +2,7 @@ import React from "react";
 
 import MovieCard from "../components/MovieCard";
 import BlurCircle from "../components/BlurCircle";
-import { useAppContext } from "../context/Appcontext";
+import { useAppContext } from "../context/useAppContext.js";
 
 // add movie list từ api
 const Movies = () => {

@@ -8,6 +8,14 @@ const bookingSchema = new mongoose.Schema(
     bookedSeats: { type: Array, required: true },
     isPaid: { type: Boolean, default: false },
     paymentLink: { type: String },
+    stripeSessionId: String,
+    expiresAt: { type: Date, index: true },
+    checkoutOrigin: String,
+    checkoutTitle: String,
+    checkoutExpiresAt: Date,
+    checkoutAttempted: { type: Boolean, default: false },
+    confirmationEmailSentAt: Date,
+    reminderSentAt: Date,
   },
   { timestamps: true }
 );

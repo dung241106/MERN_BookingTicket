@@ -1,9 +1,9 @@
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import Loading from "../../components/Loading";
 import Title from "../../components/admin/Title";
 import { dateFormat } from "../../lib/dateFormat";
-import { useAppContext } from "../../context/Appcontext";
-import isoTimeFormat from "../../lib/isotimeFormat";
+import { useAppContext } from "../../context/useAppContext.js";
+import isoTimeFormat from "../../lib/isoTimeFormat";
 import {
   Ticket,
   User,
@@ -22,7 +22,7 @@ const ListBookings = () => {
 
   const { axios, getToken, user } = useAppContext();
 
-  const getAllBookings = async () => {
+  const getAllBookings = useCallback(async () => {
     try {
       const { data } = await axios.get("/api/admin/all-bookings", {
         headers: { Authorization: `Bearer ${await getToken()}` },
@@ -35,11 +35,11 @@ const ListBookings = () => {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [axios, getToken]);
 
   useEffect(() => {
     if (user) getAllBookings();
-  }, [user]);
+  }, [user, getAllBookings]);
 
   if (isLoading) return <Loading />;
 

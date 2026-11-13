@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 
 import BlurCircle from "../components/BlurCircle";
@@ -8,7 +8,7 @@ import DateSelect from "../components/DateSelect";
 import MovieCard from "../components/MovieCard";
 import { useNavigate } from "react-router-dom";
 import Loading from "../components/Loading";
-import { useAppContext } from "../context/Appcontext";
+import { useAppContext } from "../context/useAppContext.js";
 import toast from "react-hot-toast";
 /* 
 Component dùng để hiện thị chi tiết trang của bộ phim
@@ -36,7 +36,7 @@ const MovieDetails = () => {
     favoriteMovies,
     image_base_url,
   } = useAppContext();
-  const getShow = async () => {
+  const getShow = useCallback(async () => {
     try {
       const { data } = await axios.get(`/api/show/${id}`);
       if (data.success) {
@@ -45,7 +45,7 @@ const MovieDetails = () => {
     } catch (error) {
       console.error(error);
     }
-  };
+  }, [axios, id]);
   const handleFavorite = async () => {
     try {
       if (!user) {
@@ -75,7 +75,7 @@ const MovieDetails = () => {
   // khi id đổi , nó sẽ chạy
   useEffect(() => {
     getShow();
-  }, [id]);
+  }, [getShow]);
   // hàm logic render
   return show ? (
     <div className=" px-6 md:px-16 lg:px-40 pt-30 md:pt-50">

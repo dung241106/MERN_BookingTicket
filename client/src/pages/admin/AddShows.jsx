@@ -1,10 +1,9 @@
-import React, { useEffect, useState } from "react";
-import { dummyShowsData } from "../../assets/assets";
+import React, { useCallback, useEffect, useState } from "react";
 import Loading from "../../components/Loading";
 import Title from "../../components/admin/Title";
 import { CheckIcon, DeleteIcon, StarIcon } from "lucide-react";
 import { kConverter } from "../../lib/kConverter";
-import { useAppContext } from "../../context/Appcontext";
+import { useAppContext } from "../../context/useAppContext.js";
 import toast from "react-hot-toast";
 
 const AddShows = () => {
@@ -16,7 +15,7 @@ const AddShows = () => {
   const [showPrice, setshowPrice] = useState("");
   const [addingShow, setAddingShow] = useState(false);
   const { axios, getToken, user, image_base_url } = useAppContext();
-  const fetchNowPlayingMovies = async () => {
+  const fetchNowPlayingMovies = useCallback(async () => {
     try {
       const { data } = await axios.get("/api/show/now-playing", {
         headers: { Authorization: `Bearer ${await getToken()}` },
@@ -27,7 +26,7 @@ const AddShows = () => {
     } catch (error) {
       console.error("error fetching movies:", error);
     }
-  };
+  }, [axios, getToken]);
   const handleDateTimeAdd = () => {
     if (!dateTimeInput) return;
     const [date, time] = dateTimeInput.split("T");
@@ -98,7 +97,7 @@ const AddShows = () => {
     if (user) {
       fetchNowPlayingMovies();
     }
-  }, [user]);
+  }, [user, fetchNowPlayingMovies]);
 
   return nowPlayingMovies.length > 0 ? (
     <>

@@ -3,8 +3,7 @@
 import axios from "axios";
 import Movie from "../models/Movie.js";
 import Show from "../models/Show.js";
-import { err } from "inngest/types";
-import { inngest } from "../inngest/index.js";
+import { inngest } from "../inngest/client.js";
 // get now playing movie
 //use axios to fetch api endpoint
 export const getNowPlayingMovies = async (req, res) => {
@@ -67,7 +66,7 @@ export const addShow = async (req, res) => {
     showInput.forEach((show) => {
       const showDate = show.date;
       show.time.forEach((time) => {
-        const dateTimeString = `${showDate}T${time}`;
+        const dateTimeString = `${showDate}T${time}${process.env.APP_UTC_OFFSET || "+07:00"}`;
         showToCreate.push({
           movie: movieId,
           showDateTime: new Date(dateTimeString),
@@ -134,11 +133,11 @@ export const getShow = async (req, res) => {
     const movie = await Movie.findById(movieId);
     const dateTime = {};
     shows.forEach((show) => {
-      const date = show.showDateTime.toISOString().split("T")[0];
+      const date = new Intl.DateTimeFormat("en-CA", { timeZone: process.env.APP_TIMEZONE || "Asia/Ho_Chi_Minh", year: "numeric", month: "2-digit", day: "2-digit" }).format(show.showDateTime);
       if (!dateTime[date]) {
         dateTime[date] = [];
       }
-      dateTime[date].push({ time: show.showDateTime, showId: show._id });
+      dateTime[date].push({ time: show.showDateTime, showId: show._id, showPrice: show.showPrice });
     });
     res.json({
       success: true,

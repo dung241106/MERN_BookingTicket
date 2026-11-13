@@ -5,6 +5,7 @@ const showSchema = new mongoose.Schema(
     showDateTime: { type: Date, required: true },
     showPrice: { type: Number, required: true },
     occupiedSeats: { type: Object, default: {} },
+    seatBookings: { type: Object, default: {} },
   },
   { minimize: false }
 );

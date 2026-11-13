@@ -1,53 +1,33 @@
 import Stripe from "stripe";
-import Booking from "../models/Booking.js";
-import { inngest } from "../inngest/index.js";
+import { bookingService } from "../services/bookingService.js";
+
 export const stripeWebhooks = async (req, res) => {
-  console.log("Webhook received");
-  const stripeInstance = new Stripe(process.env.STRIPE_SECRET_KEY);
-  const sig = req.headers["stripe-signature"];
+  if (!process.env.STRIPE_SECRET_KEY || !process.env.STRIPE_WEBHOOK_SECRET) {
+    return res.status(503).send("Stripe webhook is not configured");
+  }
+  const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
   let event;
-  // Kiểm tra các biến môi trường
-  if (!process.env.STRIPE_SECRET_KEY) {
-    console.error("Missing STRIPE_SECRET_KEY");
-    return res.status(500).send("Server configuration error");
-  }
-  if (!process.env.STRIPE_WEBHOOK_SECRET) {
-    console.error("STRIPE_WEBHOOKS_SECRET is not set");
-    return res.status(500).send("Server configuration error");
+  try {
+    event = stripe.webhooks.constructEvent(req.body, req.headers["stripe-signature"], process.env.STRIPE_WEBHOOK_SECRET);
+  } catch {
+    return res.status(400).send("Invalid webhook signature");
   }
   try {
-    event = stripeInstance.webhooks.constructEvent(
-      req.body,
-      sig,
-      process.env.STRIPE_WEBHOOK_SECRET
-    );
-  } catch (err) {
-    return res.status(400).send(`Webhook error:${err.message}`);
-  }
-  try {
-    switch (event.type) {
-      case "payment_intent.succeeded": {
-        const paymentIntent = event.data.object;
-        const sessionList = await stripeInstance.checkout.sessions.list({
-          payment_intent: paymentIntent.id,
-        });
-        const session = sessionList.data[0];
-        const { bookingId } = session.metadata;
-
-        await Booking.findByIdAndUpdate(bookingId, {
-          isPaid: true,
-          paymentLink: "",
-        });
-        await inngest.send({ name: "app/show.booked", data: { bookingId } });
-        break;
-      }
-
-      default:
-        console.log("unhandled event type:", event.type);
+    if (["checkout.session.completed", "checkout.session.async_payment_succeeded"].includes(event.type)) {
+      await bookingService.confirm(event.data.object);
+    } else if (event.type === "payment_intent.succeeded") {
+      // Keep compatibility with the existing Stripe endpoint subscription.
+      const sessions = await stripe.checkout.sessions.list({ payment_intent: event.data.object.id, limit: 1 });
+      if (sessions.data[0]) await bookingService.confirm(sessions.data[0]);
+    } else if (event.type === "checkout.session.async_payment_failed") {
+      await bookingService.failPayment(event.data.object);
+    } else if (event.type === "checkout.session.expired") {
+      const bookingId = event.data.object.metadata?.bookingId;
+      if (bookingId) await bookingService.expire(bookingId);
     }
     res.json({ received: true });
   } catch (error) {
-    console.error("Webhook processing error:", error);
-    res.status(500).send("internal server error");
+    console.error("Webhook processing error:", error.message);
+    res.status(500).send("Webhook processing failed; please retry");
   }
 };

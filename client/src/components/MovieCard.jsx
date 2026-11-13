@@ -1,9 +1,8 @@
 import React from "react";
-import { assets } from "../assets/assets";
 import { useNavigate } from "react-router-dom";
 import { StarIcon } from "lucide-react";
 import timeFormat from "../lib/timeFormat";
-import { useAppContext } from "../context/Appcontext";
+import { useAppContext } from "../context/useAppContext.js";
 
 /* Component này trả về giao diện 1 card phim, hỗ trợ:
 

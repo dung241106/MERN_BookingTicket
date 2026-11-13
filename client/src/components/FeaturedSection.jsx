@@ -4,7 +4,7 @@ import { useNavigate } from "react-router-dom";
 import BlurCircle from "./BlurCircle";
 
 import MovieCard from "./MovieCard";
-import { useAppContext } from "../context/Appcontext";
+import { useAppContext } from "../context/useAppContext.js";
 
 /* Đây là 1 section hiển thị phim nổi bật 
 

@@ -5,13 +5,12 @@ import {
   UsersIcon,
   StarIcon, // SỬA LỖI 1: Thêm StarIcon
 } from "lucide-react";
-import React, { useEffect, useState } from "react";
-import { dummyDashboardData } from "../../assets/assets";
+import React, { useCallback, useEffect, useState } from "react";
 import Loading from "../../components/Loading";
 import Title from "../../components/admin/Title";
 import BlurCircle from "../../components/BlurCircle";
 import { dateFormat } from "../../lib/dateFormat";
-import { useAppContext } from "../../context/Appcontext";
+import { useAppContext } from "../../context/useAppContext.js";
 import toast from "react-hot-toast";
 const DashBoard = () => {
   const { axios, getToken, user, image_base_url } = useAppContext();
@@ -45,7 +44,7 @@ const DashBoard = () => {
       icon: UsersIcon,
     },
   ];
-  const fetchDashboardData = async () => {
+  const fetchDashboardData = useCallback(async () => {
     try {
       const { data } = await axios.get("/api/admin/dashboard", {
         headers: { Authorization: `Bearer ${await getToken()}` },
@@ -59,12 +58,12 @@ const DashBoard = () => {
     } catch (error) {
       toast.error("error fetching dashboard data:", error);
     }
-  };
+  }, [axios, getToken]);
   useEffect(() => {
     if (user) {
       fetchDashboardData();
     }
-  }, [user]);
+  }, [user, fetchDashboardData]);
   return !loading ? (
     <>
       <Title text1="Admin" text2="Dashboard" />

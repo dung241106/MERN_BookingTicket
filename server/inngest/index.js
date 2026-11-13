@@ -1,262 +1,134 @@
-import { Inngest, step } from "inngest";
 import User from "../models/User.js";
 import Booking from "../models/Booking.js";
 import Show from "../models/Show.js";
 import sendEmail from "../config/nodeMailer.js";
-// Thêm dòng này vào đầu file inngest/index.js
-console.log(
-  "INNGEST FUNCTIONS ĐÃ ĐƯỢC LOAD LẠI – PHIÊN BẢN MỚI NHẤT:",
-  new Date().toISOString()
-);
-// Create a client to send and receive events
-export const inngest = new Inngest({ id: "movie-ticket-booking" });
+import { inngest } from "./client.js";
+import { bookingService } from "../services/bookingService.js";
+export { inngest } from "./client.js";
 
-// Inngest fun to save  user data to DB:
+const zone = process.env.APP_TIMEZONE || "Asia/Ho_Chi_Minh";
+const escapeHtml = (value) => String(value).replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]);
+const userData = ({ id, first_name, last_name, email_addresses, image_url }) => ({
+  _id: id, name: [first_name, last_name].filter(Boolean).join(" ") || email_addresses[0].email_address,
+  email: email_addresses[0].email_address, image: image_url,
+});
+
 const syncUserCreation = inngest.createFunction(
-  {
-    id: "sync - user - from - clerk",
-  },
-  { event: "clerk/user.created" },
+  { id: "sync - user - from - clerk" }, { event: "clerk/user.created" },
   async ({ event }) => {
-    const { id, first_name, last_name, email_addresses, image_url } =
-      event.data;
-    const userData = {
-      _id: id,
-      email: email_addresses[0].email_address,
-      name: first_name + " " + last_name,
-      image: image_url,
-    };
-    await User.create(userData);
+    const data = userData(event.data);
+    await User.findByIdAndUpdate(data._id, data, { upsert: true, runValidators: true });
   }
 );
-
-// Inngest fun to deleta  user data to DB
 const syncUserDeletion = inngest.createFunction(
-  {
-    id: "delete-user-with-clerk",
-  },
-  { event: "clerk/user.deleted" },
-  async ({ event }) => {
-    const { id } = event.data;
-    await User.findByIdAndDelete(id);
-  }
+  { id: "delete-user-with-clerk" }, { event: "clerk/user.deleted" },
+  async ({ event }) => { await User.findByIdAndDelete(event.data.id); }
 );
-
-// Inngest fun to update user data to DB
 const syncUserUpdation = inngest.createFunction(
-  {
-    id: "update-user-from-clerk",
-  },
-  { event: "clerk/user.updated" },
+  { id: "update-user-from-clerk" }, { event: "clerk/user.updated" },
   async ({ event }) => {
-    const { id, first_name, last_name, email_addresses, image_url } =
-      event.data;
-    const userData = {
-      _id: id,
-      email: email_addresses[0].email_address,
-      name: first_name + " " + last_name,
-      image: image_url,
-    };
-    await User.findByIdAndUpdate(id, userData);
+    const data = userData(event.data);
+    await User.findByIdAndUpdate(data._id, data, { upsert: true, runValidators: true });
   }
 );
-//cancel booking and release seats of 10min if not payment
+
 const releaseSeatsAndDeleteBooking = inngest.createFunction(
-  {
-    id: "release-seats-delete-booking",
-  },
-  { event: "app/checkpayment" },
+  { id: "release-seats-delete-booking" }, { event: "app/checkpayment" },
   async ({ event, step }) => {
-    const tenMinutesLater = new Date(Date.now() + 10 * 60 * 1000);
-    await step.sleepUntil("wait-for-10-minutes", tenMinutesLater);
-    await step.run("check-payment-status", async () => {
-      const bookingId = event.data.bookingId;
-      const booking = await Booking.findById(bookingId);
-      //if payment is not made,release seats and delete bookings
-      if (!booking.isPaid) {
-        const show = await Show.findById(booking.show);
-        booking.bookedSeats.forEach((seat) => {
-          delete show.occupiedSeats[seat];
-        });
-        show.markModified("occupiedSeats");
-        await show.save();
-
-        await Booking.findByIdAndDelete(booking._id);
-      }
+    const booking = await step.run("get-booking-deadline", async () => {
+      const row = await Booking.findById(event.data.bookingId).lean();
+      return row && { id: row._id.toString(), expiresAt: (row.expiresAt || new Date(row.createdAt.getTime() + 10 * 60 * 1000)).toISOString() };
     });
+    if (!booking) return;
+    await step.sleepUntil("wait-for-10-minutes", new Date(booking.expiresAt));
+    await step.run("check-payment-status", () => bookingService.expire(booking.id));
   }
 );
 
-// function to send email when user book a ticket, gui mail = node-mailer
+// Recover an expiry event lost during a temporary event-service/network failure.
+const recoverPendingBookings = inngest.createFunction(
+  { id: "recover-pending-bookings" }, { cron: "*/5 * * * *" },
+  async ({ step }) => {
+    const ids = await step.run("find-expired-bookings", async () => {
+      const rows = await Booking.find({ isPaid: false, $or: [
+        { expiresAt: { $lte: new Date() } },
+        { expiresAt: null, createdAt: { $lte: new Date(Date.now() - 10 * 60 * 1000) } },
+      ] }).select("_id").limit(100).lean();
+      return rows.map((row) => row._id.toString());
+    });
+    const expiryResults = await Promise.allSettled(ids.map((id) => step.run(`expire-${id}`, () => bookingService.expire(id))));
+    // Recover paid bookings whose confirmation event could not be delivered.
+    const paidIds = await step.run("find-unqueued-confirmations", async () => {
+      const rows = await Booking.find({ isPaid: true, confirmationEmailSentAt: null }).select("_id").limit(100).lean();
+      return rows.map((row) => row._id.toString());
+    });
+    for (const id of paidIds) await step.sendEvent(`confirm-${id}`, { id: `booking-paid-${id}`, name: "app/show.booked", data: { bookingId: id } });
+    const failed = expiryResults.find((result) => result.status === "rejected");
+    if (failed) throw failed.reason;
+  }
+);
+
 const sendBookingConfirmationEmail = inngest.createFunction(
-  {
-    id: "send-booking-confirmation-email",
-  },
+  { id: "send-booking-confirmation-email", concurrency: { limit: 1, key: "event.data.bookingId" } },
   { event: "app/show.booked" },
   async ({ event, step }) => {
     const { bookingId } = event.data;
-    const booking = await Booking.findById(bookingId)
-      .populate({
-        path: "show",
-        populate: { path: "movie", model: "Movie" },
-      })
-      .populate("user");
-
-    //
-    await sendEmail({
-      to: booking.user.email,
-      subject: `Payment Confirmation:"${booking.show.movie.title}" booked!`,
-      body: `<div style="font-family: Arial, sans-serif; line-height: 1.5;">
-  <h2>Hi ${booking.user.name},</h2>
-  <p>Your booking for <strong style="color: #F84565;">${
-    booking.show.movie.title
-  }</strong> is confirmed.</p>
-  <p>
-    <strong>Date:</strong> ${new Date(
-      booking.show.showDateTime
-    ).toLocaleDateString("en-US", { timeZone: "Asia/Kolkata" })}<br/>
-    <strong>Time:</strong> ${new Date(
-      booking.show.showDateTime
-    ).toLocaleTimeString("en-US", { timeZone: "Asia/Kolkata" })}
-  </p>
-  <p>Enjoy the show! 🍿</p>
-  <p>Thanks for booking with us!<br/>— QuickShow Team</p>
-</div>`,
+    const details = await step.run("load-paid-booking", async () => {
+      const booking = await Booking.findById(bookingId).populate({ path: "show", populate: { path: "movie" } }).populate("user");
+      if (!booking?.isPaid || booking.confirmationEmailSentAt) return null;
+      if (!booking.user || !booking.show?.movie) throw new Error("Booking user/movie has not been synchronized yet");
+      return { to: booking.user.email, name: booking.user.name, title: booking.show.movie.title, time: booking.show.showDateTime.toISOString() };
     });
+    if (!details) return;
+    await step.run("send-confirmation", () => sendEmail({
+      to: details.to, subject: `Payment Confirmation: "${details.title}" booked!`,
+      body: `<div style="font-family:Arial,sans-serif;line-height:1.5"><h2>Hi ${escapeHtml(details.name)},</h2><p>Your booking for <strong>${escapeHtml(details.title)}</strong> is confirmed.</p><p>Date and time: ${new Date(details.time).toLocaleString("en-US", { timeZone: zone })}</p><p>Enjoy the show! — QuickShow Team</p></div>`,
+    }));
+    await step.run("mark-confirmation-sent", () => Booking.updateOne({ _id: bookingId }, { $set: { confirmationEmailSentAt: new Date() } }));
   }
 );
 
-//function to set reminder
 const sendShowReminders = inngest.createFunction(
-  {
-    id: "send-show-reminders",
-  },
-  { cron: "0 */8 * * *" }, //every 8h
+  { id: "send-show-reminders", concurrency: 1 }, { cron: "*/10 * * * *" },
   async ({ step }) => {
-    const now = new Date();
-    const in8Hours = new Date(now.getTime() + 8 * 60 * 60 * 1000);
-    const windowStart = new Date(in8Hours.getTime() - 10 * 60 * 1000);
-    //prepare reminder taskc
-    const reminderTasks = await step.run("prepare-reminder-tasks", async () => {
-      const shows = await Show.find({
-        showTime: { $gte: windowStart, $lte: in8Hours },
-      }).populate("movie");
+    const tasks = await step.run("prepare-reminder-tasks", async () => {
+      const now = new Date();
+      const shows = await Show.find({ showDateTime: { $gt: now, $lte: new Date(now.getTime() + 8 * 60 * 60 * 1000) } }).populate("movie");
       const tasks = [];
       for (const show of shows) {
-        if (!show.movie || !show.occupiedSeats) {
-          continue;
-        }
-        const userIds = [...new set(Object.values(show.occupiedSeats))];
-        if (userIds.length === 0) {
-          continue;
-        }
-        const users = await User.find({
-          _id: { $in: userIds },
-        }).select("name email");
-        for (const user of users) {
-          tasks.push({
-            userEmail: user.email,
-            userName: user.name,
-            movieTitle: show.movie.title,
-            showTime: show.showTime,
-          });
-        }
+        if (!show.movie) continue;
+        const bookings = await Booking.find({ show: show._id.toString(), isPaid: true, reminderSentAt: null }).lean();
+        const userIds = [...new Set(bookings.map((booking) => booking.user))];
+        const users = await User.find({ _id: { $in: userIds } }).lean();
+        for (const user of users) tasks.push({
+          key: `${show._id}-${user._id}`, email: user.email, name: user.name,
+          title: show.movie.title, time: show.showDateTime.toISOString(),
+          bookingIds: bookings.filter((booking) => booking.user === user._id).map((booking) => booking._id.toString()),
+        });
       }
       return tasks;
     });
-    if (reminderTasks.length === 0) {
-      return { sent: 0, message: "No reminders to send." };
+    for (const task of tasks) {
+      await step.run(`remind-${task.key}`, () => sendEmail({
+        to: task.email, subject: `Reminder: your movie "${task.title}" starts soon!`,
+        body: `<div style="font-family:Arial,sans-serif"><h2>Hi ${escapeHtml(task.name)},</h2><p>Your movie <strong>${escapeHtml(task.title)}</strong> starts at ${new Date(task.time).toLocaleString("en-US", { timeZone: zone })}.</p><p>Enjoy the show! — QuickShow Team</p></div>`,
+      }));
+      await step.run(`mark-reminded-${task.key}`, () => Booking.updateMany({ _id: { $in: task.bookingIds } }, { $set: { reminderSentAt: new Date() } }));
     }
-    //send reminder email
-    const results = await step.run("send-all-reminders", async () => {
-      return await Promise.allSettled(
-        reminderTasks.map((task) =>
-          sendEmail({
-            to: task.userEmail,
-            subject: `Reminder: your movie "${task.movieTitle}" starts soon!`,
-            body: `<div style="font-family: Arial, sans-serif; line-height: 1.5;">
-  <h2>Hi ${task.userName},</h2>
-  <p>This is a quick reminder that your movie:</p>
-  <h3 style="color:#F84565;">"${task.movieTitle}"> </h3>
-  <p>
-   is scheduled for <strong>${new Date(task.showTime).toLocaleDateString(
-     "en-US",
-     { timeZone: "Asia/Kolkata" }
-   )}</strong>.</p>
-   <p>It start in approximately <strong> 8 Hours </strong></p>
-  <p>Enjoy the show! 🍿<]/p>
-  <p>Thanks for booking with us!<br/>— QuickShow Team</p>
-</div>`,
-          })
-        )
-      );
-    });
-    const sent = results.filter((r) => r.status === "fulfilled").length();
-    const failed = results.length - sent;
-    return {
-      sent,
-      failed,
-      message: `Sent ${sent} reminder(s), ${failed} failed.`,
-    };
+    return { sent: tasks.length };
   }
 );
-//functionto send noti when new show is added
+
 const sendNewShowNotifications = inngest.createFunction(
-  {
-    id: "send-new-show-notifications",
-  },
-
-  { event: "app/show.added" },
-  async ({ event }) => {
-    console.log("FUNCTION BẮT ĐẦU CHẠY – PHIM MỚI:", event.data.movieTitle); // ← THÊM DÒNG NÀY
-
-    const { movieTitle } = event.data;
-    const users = await User.find({});
-    console.log("TÌM THẤY", users.length, "USER ĐỂ GỬI MAIL"); // ← THÊM DÒNG NÀY
-
-    if (users.length === 0) {
-      console.log("KHÔNG CÓ USER – SKIP");
-      return { message: "No users to notify" };
-    }
-
-    let sentCount = 0;
-    for (const user of users) {
-      try {
-        await sendEmail({
-          to: user.email,
-          subject: `New Show Added: ${movieTitle}`,
-          body: `<div style="font-family: Arial, sans-serif; padding: 20px;">
-  <h2>Hi ${user.name},</h2>
-  <p>We've just added a new show to our library:</p>
-  <h3 style="color: #F84565;">"${movieTitle}"</h3>
-  <p>Visit our website</p>
-  <br/>
-  <p>Thanks,<br/>QuickShow Team</p>
-</div>`,
-        });
-        sentCount++;
-        console.log("GỬI THÀNH CÔNG CHO:", user.email); // ← THÊM DÒNG NÀY
-      } catch (error) {
-        console.error("LỖI GỬI MAIL CHO", user.email, ":", error.message);
-      }
-    }
-
-    console.log(
-      "TỔNG KẾT: GỬI",
-      sentCount,
-      "/",
-      users.length,
-      "MAIL THÀNH CÔNG"
-    );
-    return { message: `Notifications sent to ${sentCount} users.` };
+  { id: "send-new-show-notifications" }, { event: "app/show.added" },
+  async ({ event, step }) => {
+    const users = await step.run("load-users", () => User.find({}).select("name email").lean());
+    for (const user of users) await step.run(`notify-${user._id}`, () => sendEmail({
+      to: user.email, subject: `New Show Added: ${event.data.movieTitle}`,
+      body: `<div style="font-family:Arial,sans-serif"><h2>Hi ${escapeHtml(user.name)},</h2><p>We've just added a new show: <strong>${escapeHtml(event.data.movieTitle)}</strong>.</p><p>Visit our website. — QuickShow Team</p></div>`,
+    }));
+    return { sent: users.length };
   }
 );
-export const functions = [
-  syncUserCreation,
-  syncUserDeletion,
-  syncUserUpdation,
-  releaseSeatsAndDeleteBooking,
-  sendBookingConfirmationEmail,
-  sendShowReminders,
-  sendNewShowNotifications,
-];
+
+export const functions = [syncUserCreation, syncUserDeletion, syncUserUpdation, releaseSeatsAndDeleteBooking, recoverPendingBookings, sendBookingConfirmationEmail, sendShowReminders, sendNewShowNotifications];

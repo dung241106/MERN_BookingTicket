@@ -1,4 +1,3 @@
-import { populate } from "dotenv";
 import Booking from "../models/Booking.js";
 import Show from "../models/Show.js";
 import User from "../models/User.js";
@@ -35,7 +34,13 @@ export const getAllShows = async (req, res) => {
   try {
     const shows = await Show.find({ showDateTime: { $gte: new Date() } })
       .populate("movie")
-      .sort({ showDateTime: 1 });
+      .sort({ showDateTime: 1 }).lean();
+    const paidBookings = await Booking.find({ isPaid: true, show: { $in: shows.map((show) => show._id.toString()) } }).lean();
+    for (const show of shows) {
+      const paid = paidBookings.filter((booking) => booking.show === show._id.toString());
+      show.paidSeats = paid.reduce((total, booking) => total + booking.bookedSeats.length, 0);
+      show.earnings = paid.reduce((total, booking) => total + booking.amount, 0);
+    }
     res.json({ success: true, shows });
   } catch (error) {
     console.log(error.message);

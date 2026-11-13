@@ -14,7 +14,7 @@ import AddShows from "./pages/admin/AddShows";
 import DashBoard from "./pages/admin/DashBoard";
 import ListShows from "./pages/admin/ListShows";
 import ListBookings from "./pages/admin/ListBookings";
-import { useAppContext } from "./context/Appcontext";
+import { useAppContext } from "./context/useAppContext.js";
 import { SignIn } from "@clerk/clerk-react";
 import Loading from "./components/Loading";
 
@@ -28,7 +28,7 @@ const App = () => {
   const { user } = useAppContext();
   return (
     <>
-      <Toaster />
+      <Toaster /> 
 
       {!isAdminRoute && <Navbar />}
       <Routes>

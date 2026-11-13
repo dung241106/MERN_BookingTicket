@@ -53,7 +53,7 @@ import { assets } from "../assets/assets";
 import { MenuIcon, Search, SearchIcon, TicketPlus, XIcon } from "lucide-react";
 import { useState } from "react";
 import { useClerk, UserButton, useUser } from "@clerk/clerk-react";
-import { useAppContext } from "../context/Appcontext";
+import { useAppContext } from "../context/useAppContext.js";
 
 /*  Tạo 1 navbar bao gồm
 logo , menu item , searchIcon , clerkLogin */

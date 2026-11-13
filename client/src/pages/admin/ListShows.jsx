@@ -1,20 +1,15 @@
-import React, { useEffect, useState } from "react";
-import {
-  dummyShowsData,
-  generateDynamicDateTimeData,
-} from "../../assets/assets";
+import React, { useCallback, useEffect, useState } from "react";
 import Loading from "../../components/Loading";
 import Title from "../../components/admin/Title";
 import { dateFormat } from "../../lib/dateFormat";
-import isoTimeFormat from "../../lib/isotimeFormat"; // Cần thêm hàm này
-import { useAppContext } from "../../context/Appcontext";
+import { useAppContext } from "../../context/useAppContext.js";
 const ListShows = () => {
   const currency = import.meta.env.VITE_CURRENCY;
   const { axios, getToken, user } = useAppContext();
   const [shows, setShows] = useState([]); // tạo 1 biến state tên là show, setShow là cập nhật giá trị
   const [loading, setLoading] = useState(true);
   // đã tạo state thì phải fetch data đó
-  const getAllShows = async () => {
+  const getAllShows = useCallback(async () => {
     try {
       const { data } = await axios.get("/api/admin/all-shows", {
         headers: { Authorization: `Bearer ${await getToken()}` },
@@ -24,13 +19,13 @@ const ListShows = () => {
     } catch (error) {
       console.error(error);
     }
-  };
+  }, [axios, getToken]);
 
   useEffect(() => {
     if (user) {
       getAllShows();
     }
-  }, [user]);
+  }, [user, getAllShows]);
   return !loading ? (
     <>
       <Title text1="List " text2="Shows" />
@@ -53,11 +48,11 @@ const ListShows = () => {
                 <td className=" p-2 min-w-45 pl-5">{show.movie.title}</td>
                 <td className=" p-2 ">{dateFormat(show.showDateTime)}</td>
                 <td className=" p-2 ">
-                  {Object.keys(show.occupiedSeats).length}
+                  {show.paidSeats}
                 </td>
                 <td className=" p-2 ">
                   {currency}
-                  {Object.keys(show.occupiedSeats).length * show.showPrice}
+                  {Number(show.earnings || 0).toFixed(2)}
                 </td>
               </tr>
             ))}

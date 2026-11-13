@@ -1,10 +1,11 @@
 import express from "express";
+import { protectUser } from "../middleware/auth.js";
 import {
   createBooking,
   getOccupiedSeats,
 } from "../controllers/bookingControllers.js";
 const bookingRouter = express.Router();
-bookingRouter.post("/create", createBooking);
+bookingRouter.post("/create", protectUser, createBooking);
 bookingRouter.get("/seats/:showId", getOccupiedSeats);
 
 /* // Thiếu trong bookingRoutes.js:

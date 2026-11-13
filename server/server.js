@@ -1,6 +1,7 @@
+import "./config/env.js";
 import express from "express";
 import cors from "cors";
-import "dotenv/config";
+import { pathToFileURL } from "node:url";
 import connectDB from "./config/db.js";
 import { clerkMiddleware } from "@clerk/express";
 import { serve } from "inngest/express";
@@ -9,66 +10,42 @@ import showRouter from "./routes/showRoutes.js";
 import bookingRouter from "./routes/bookingRoutes.js";
 import adminRouter from "./routes/adminRoutes.js";
 import userRouter from "./routes/userRoutes.js";
+import { protectAdmin } from "./middleware/auth.js";
 import { stripeWebhooks } from "./controllers/stripeWebhooks.js";
 
 const app = express();
-const port = 3000;
-
-try {
-  await connectDB();
-} catch (error) {
-  console.error("Error");
-}
-
-//stripe webhook route
-app.use(
-  "/api/stripe",
-  express.raw({ type: "application/json" }),
-  stripeWebhooks
-);
-
-//middleware
+app.post("/api/stripe", express.raw({ type: "application/json" }), stripeWebhooks);
 app.use(express.json());
-app.use(cors());
+const origins = (process.env.FRONTEND_URL || "http://localhost:5173").split(",").map((url) => url.trim().replace(/\/$/, ""));
+app.use(cors({ origin: origins }));
+app.get("/", (req, res) => res.send("Server is live"));
 app.use(clerkMiddleware());
-
-// api route
-
-app.get("/", (req, res) => res.send(" Server is live"));
 app.use("/api/inngest", serve({ client: inngest, functions }));
 app.use("/api/show", showRouter);
-
 app.use("/api/booking", bookingRouter);
 app.use("/api/admin", adminRouter);
 app.use("/api/user", userRouter);
-// TEST API – GỬI THÔNG BÁO PHIM MỚI CHO TẤT CẢ USER (chỉ để test)
-app.get("/test-new-show-notification", async (req, res) => {
+
+// Keep the test endpoint, but only administrators can trigger its existing mail event.
+app.get("/test-new-show-notification", protectAdmin, async (req, res) => {
   try {
-    console.log("BẮT ĐẦU TEST GỬI MAIL PHIM MỚI...");
-
-    await inngest.send({
-      name: "app/show.added",
-      data: {
-        movieTitle: "DEADPOOL & WOLVERINE – PHIM SIÊU HOT ĐÃ LÊN SÓNG!!!",
-      },
-    });
-
-    res.send(`
-      <h2>ĐÃ GỬI EVENT app/show.added THÀNH CÔNG!</h2>
-      <p>Chờ 10-20 giây rồi làm 2 việc:</p>
-      <ol>
-        <li>Mở <a href="https://app.inngest.com" target="_blank">Inngest Dashboard → Runs</a> → tìm "send-new-show-notifications" → phải chuyển thành <strong>Completed</strong></li>
-        <li>Check Gmail của tất cả user (hoặc của bạn) → phải nhận được mail</li>
-      </ol>
-      <hr>
-      <p>Nếu cả 2 đều OK → XONG 100%!</p>
-      <p>Nếu vẫn không → chụp ảnh Inngest Run (có Failed không?) gửi mình ngay!</p>
-    `);
+    await inngest.send({ name: "app/show.added", data: { movieTitle: "DEADPOOL & WOLVERINE" } });
+    res.json({ success: true, message: "Notification event sent" });
   } catch (error) {
-    console.error("Lỗi test:", error);
-    res.status(500).send("Lỗi: " + error.message);
+    console.error(error.message);
+    res.status(500).json({ success: false, message: "Could not send notification event" });
   }
 });
-app.listen(port, () =>
-  console.log(`Server listening at: http://localhost:${port} `)
-);
+
+export async function startServer() {
+  await connectDB();
+  const port = Number(process.env.PORT || 3000);
+  return app.listen(port, "0.0.0.0", () => console.log(`Server listening on port ${port}`));
+}
+
+if (process.env.VERCEL) {
+  await connectDB();
+} else if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  startServer().catch((error) => { console.error(error.message); process.exitCode = 1; });
+}
+export default app;

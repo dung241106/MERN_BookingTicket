@@ -1,18 +1,14 @@
-import React, { useEffect } from "react";
+import React, { useCallback, useEffect } from "react";
 import { useParams } from "react-router-dom";
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import {
-  dummyShowsData,
-  assets,
-  generateDynamicDateTimeData,
-} from "../assets/assets.js";
+import { assets } from "../assets/assets.js";
 import Loading from "../components/Loading";
 import { ArrowRightIcon, ClockIcon } from "lucide-react";
-import isoTimeFormat from "../lib/isotimeFormat";
+import isoTimeFormat from "../lib/isoTimeFormat";
 import BlurCircle from "../components/BlurCircle";
 import toast from "react-hot-toast";
-import { useAppContext } from "../context/Appcontext.jsx";
+import { useAppContext } from "../context/useAppContext.js";
 
 const SeatLayout = () => {
   const groupRows = [
@@ -29,8 +25,9 @@ const SeatLayout = () => {
   const [show, setShow] = useState(null);
   const navigate = useNavigate();
   const [occupiedSeats, setOccupiedSeats] = useState([]);
+  const [isBooking, setIsBooking] = useState(false);
 
-  const getShow = async () => {
+  const getShow = useCallback(async () => {
     try {
       const { data } = await axios.get(`/api/show/${id}`);
       if (data.success) {
@@ -39,7 +36,7 @@ const SeatLayout = () => {
     } catch (error) {
       console.error(error);
     }
-  };
+  }, [axios, id]);
 
   const handleSeatClick = (seatId) => {
     if (!selectedTime) {
@@ -82,7 +79,7 @@ const SeatLayout = () => {
     </div>
   );
 
-  const getOccupiedSeats = async () => {
+  const getOccupiedSeats = useCallback(async () => {
     if (!selectedTime) return; // Safety check
     try {
       const { data } = await axios.get(
@@ -96,8 +93,9 @@ const SeatLayout = () => {
     } catch (error) {
       console.error(error);
     }
-  };
+  }, [axios, selectedTime]);
   const bookTickets = async () => {
+    if (isBooking) return;
     try {
       if (!user) {
         return toast.error("Please log in to continue");
@@ -108,6 +106,7 @@ const SeatLayout = () => {
       }
 
       // Loading toast đẹp lung linh
+      setIsBooking(true);
       const loadingToast = toast.loading("Redirecting to payment...");
 
       const { data } = await axios.post(
@@ -147,24 +146,26 @@ const SeatLayout = () => {
       }
     } catch (error) {
       toast.dismiss();
-      toast.error("Payment gateway error. Please try again later.", {
+      toast.error(error.response?.data?.message || "Payment gateway error. Please try again later.", {
         icon: "warning",
         duration: 5000,
       });
       console.error("Booking error:", error);
+    } finally {
+      setIsBooking(false);
     }
   };
   useEffect(() => {
     if (selectedTime) {
       getOccupiedSeats();
     }
-  }, [selectedTime]);
+  }, [selectedTime, getOccupiedSeats]);
 
   useEffect(() => {
     getShow();
-  }, [id, date]);
+  }, [getShow, date]);
 
-  const pricePerSeat = 8;
+  const pricePerSeat = selectedTime ? Math.round(selectedTime.showPrice * 100) / 100 : 0;
   const availableTimes = show ? show.dateTime[date] : null;
 
   return show ? (
@@ -179,6 +180,7 @@ const SeatLayout = () => {
                 key={item.showId}
                 onClick={() => {
                   setSelectedTime(item);
+                  setOccupiedSeats([]);
                   setSelectedSeats([]); // Reset ghế khi đổi giờ
                 }}
                 className={`flex items-center gap-2 px-6 py-2 w-max rounded-r-md cursor-pointer transition ${
@@ -235,7 +237,7 @@ const SeatLayout = () => {
             <div>
               <p className="text-gray-400 text-sm">Total Price</p>
               <p className="text-primary font-semibold text-lg">
-                ${selectedSeats.length * pricePerSeat}
+                ${(selectedSeats.length * pricePerSeat).toFixed(2)}
               </p>
             </div>
           </div>
@@ -243,6 +245,7 @@ const SeatLayout = () => {
           {/* Nút bấm (Phải) */}
           <button
             onClick={bookTickets}
+            disabled={isBooking}
             className="flex items-center justify-center gap-2 px-6 py-3 text-sm bg-primary hover:bg-primary-dull transition rounded-full font-medium cursor-pointer active:scale-95"
           >
             <span className="max-md:hidden">Process To CheckOut</span>
