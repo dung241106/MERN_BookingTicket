@@ -1,6 +1,6 @@
 # QuickShow — Website đặt vé xem phim
 
-Dự án **DACS2_WEB** gồm giao diện khách hàng, trang quản trị và API backend cho hệ thống đặt vé xem phim.
+Dự án **WEB** gồm giao diện khách hàng, trang quản trị và API backend cho hệ thống đặt vé xem phim.
 
 ## Chức năng chính
 
